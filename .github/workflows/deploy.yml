@@ -1,0 +1,101 @@
+name: "Build, Test, Scan, and Push Pipeline"
+
+# Trigger the workflow on every push to the main branch
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  pipeline_lifecycle:
+    name: "DevOps Core Pipeline Runner"
+    runs-on: ubuntu-latest
+
+    # Global environment variables
+    env:
+      IMAGE_NAME: "core-api"
+      REGISTRY_URL: "https://hub.docker.com/v2/repositories/${{ secrets.DOCKERHUB_USERNAME }}/core-api/tags/?page_size=100"
+
+    steps:
+      # 1. Pull down the source code onto the GitHub Cloud Runner
+      - name: "Step 1: Checkout Source Code"
+        uses: actions/checkout@v4
+
+      # 2. Authenticate securely with Docker Hub using your GitHub Secrets
+      - name: "Step 2: Authenticate to Docker Hub"
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 3. Pull from Docker Hub API, clean strings, and use awk to calculate next patch number
+      - name: "Step 3: Dynamically Calculate Next Tag"
+        id: tag_calculator
+        run: |
+          echo "🌐 Querying Docker Hub API..."
+          API_RESPONSE=$(curl -s "$REGISTRY_URL")
+          IS_EMPTY=$(echo "$API_RESPONSE" | jq -r '.results | length // 0')
+
+          if [ "$IS_EMPTY" -eq 0 ]; then
+            echo "⚠️ Repository empty. Initializing baseline tag at v1.0.0"
+            LATEST_TAG="v1.0.0"
+          else
+            LATEST_TAG=$(echo "$API_RESPONSE" | jq -r '.results[].name' | grep -v "latest" | head -n 1)
+            echo "📡 Live version found: $LATEST_TAG"
+          fi
+
+          # Slicing with awk
+          CLEAN_TAG="${LATEST_TAG#v}"
+          MAJOR=$(echo "$CLEAN_TAG" | awk -F. '{print $1}')
+          MINOR=$(echo "$CLEAN_TAG" | awk -F. '{print $2}')
+          PATCH=$(echo "$CLEAN_TAG" | awk -F. '{print $3}')
+
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="v${MAJOR}.${MINOR}.${NEW_PATCH}"
+          echo "🚀 Next targeted tag: $NEW_VERSION"
+          
+          # Pass the variable to subsequent GitHub Action steps
+          echo "calculated_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+
+      # 4. Compile the multi-stage Dockerfile layers locally on the runner
+      - name: "Step 4: Build Local Docker Image"
+        run: |
+          docker build -t "${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:${{ steps.tag_calculator.outputs.calculated_version }}" .
+
+      # 5. Boot up the image in the background, wait for init, and verify HTTP status with curl
+      - name: "Step 5: Run Integration Smoke Test"
+        run: |
+          echo "🧪 Launching container test instance..."
+          docker run -d -p 3000:3000 --name test-container "${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:${{ steps.tag_calculator.outputs.calculated_version }}"
+          
+          echo "⏳ Waiting for Node.js app..."
+          sleep 3
+          
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000/" || echo "000")
+          
+          if [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "✅ Smoke test passed!"
+            docker rm -f test-container
+          else
+            echo "❌ Smoke test failed with status: $HTTP_STATUS" >&2
+            docker rm -f test-container
+            exit 1
+          fi
+
+      # 6. Pull the security scanner action directly from the ecosystem to inspect layers
+      - name: "Step 6: Run Vulnerability Scan (Trivy)"
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:${{ steps.tag_calculator.outputs.calculated_version }}"
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL'
+
+      # 7. If everything passes, attach latest meta-tag and push images into your cloud registry
+      - name: "Step 7: Distribute Final Production Image"
+        run: |
+          docker tag "${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:${{ steps.tag_calculator.outputs.calculated_version }}" "${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:latest"
+          docker push "${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:${{ steps.tag_calculator.outputs.calculated_version }}"
+          docker push "${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:latest"
