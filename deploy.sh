@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# DEVOPS ENGINE: LIVE REGISTRY SCRAING, CONTAINER BUILDER & INTEGRATION TESTER
+# ULTIMATE DEVOPS ENGINE: BUILD, TEST, SCAN, AND DISTRIBUTION PIPELINE
 # ==============================================================================
 set -euo pipefail
 
@@ -18,13 +18,11 @@ TEST_PORT="3000"
 cleanup() {
   echo "🧹 [CLEANUP] Tearing down resources..." >&2
   
-  # Remove the lockfile
   if [[ -f "$LOCKFILE" ]]; then
     rm -f "$LOCKFILE"
     echo "🗑️ [CLEANUP] Lockfile cleared." >&2
   fi
 
-  # Stop and remove the test container if it is still running
   if docker ps -a --format '{{.Names}}' | grep -q "^${TEST_CONTAINER_NAME}$"; then
     echo "🛑 [CLEANUP] Stopping and removing temporary test container..." >&2
     docker rm -f "$TEST_CONTAINER_NAME" &> /dev/null
@@ -33,7 +31,7 @@ cleanup() {
 trap cleanup EXIT ERR SIGINT
 
 # --- 3. PRE-FLIGHT VALIDATION ---
-echo "🔍 Running pre-flight system check for environment: [${ENV_TARGET^^}]..."
+echo "🔍 Running pre-flight system check..."
 
 if [[ -f "$LOCKFILE" ]]; then
   echo "❌ CRITICAL: A build deployment for $ENV_TARGET is already in progress!" >&2
@@ -41,9 +39,10 @@ if [[ -f "$LOCKFILE" ]]; then
 fi
 touch "$LOCKFILE"
 
-for TOOL in curl jq docker; do
+# Added 'trivy' to the required tools checklist
+for TOOL in curl jq docker trivy; do
   if ! command -v "$TOOL" &> /dev/null; then
-    echo "❌ CRITICAL ERROR: Required tool '$TOOL' is missing." >&2
+    echo "❌ CRITICAL ERROR: Required tool '$TOOL' is missing from host." >&2
     exit 1
   fi
 done
@@ -69,38 +68,31 @@ PATCH=$(echo "$CLEAN_TAG" | awk -F. '{print $3}')
 
 NEW_PATCH=$((PATCH + 1))
 NEW_VERSION="v${MAJOR}.${MINOR}.${NEW_PATCH}"
+FULL_IMAGE_TAG="${DOCKER_USER}/${IMAGE_NAME}:${NEW_VERSION}"
 echo "🚀 Next targeted production tag calculated as: $NEW_VERSION"
 
 # --- 6. BUILD LAYER ---
 echo "🔨 Compiling optimized layers for Node.js image..."
-docker build --build-arg NODE_ENV="$ENV_TARGET" -t "${DOCKER_USER}/${IMAGE_NAME}:${NEW_VERSION}" .
+docker build --build-arg NODE_ENV="$ENV_TARGET" -t "$FULL_IMAGE_TAG" .
 
 # --- 7. AUTOMATED INTEGRATION TESTING LAYER ---
 echo "🧪 [TEST] Launching container smoke test..."
+docker run -d -p "${TEST_PORT}:${TEST_PORT}" --name "$TEST_CONTAINER_NAME" "$FULL_IMAGE_TAG"
 
-# Run the newly built image locally using our port mapping rule (Host Port : Container Port)
-docker run -d \
-  -p "${TEST_PORT}:${TEST_PORT}" \
-  --name "$TEST_CONTAINER_NAME" \
-  "${DOCKER_USER}/${IMAGE_NAME}:${NEW_VERSION}"
-
-echo "⏳ [TEST] Waiting 3 seconds for Node.js application to initialize..."
+echo "⏳ [TEST] Waiting 3 seconds for app initialization..."
 sleep 3
 
-echo "📡 [TEST] Sending smoke test payload to http://localhost:${TEST_PORT}/ ..."
-# Hit the endpoint. -s makes it silent, -w extracts the HTTP response code
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${TEST_PORT}/" || echo "000")
 
 if [[ "$HTTP_STATUS" -eq 200 ]]; then
   echo "✅ [TEST PASSED] Container responded with HTTP 200 OK!"
-  # Safely remove the test container now that it passed so we free up the host port
   docker rm -f "$TEST_CONTAINER_NAME" &> /dev/null
 else
   echo "❌ [TEST FAILED] App returned HTTP status: $HTTP_STATUS instead of 200." >&2
   exit 1
 fi
 
-# --- 7.2. VULNERABILITY SCANNING LAYER (TRIVY) ---
+# --- 8. VULNERABILITY SCANNING LAYER (TRIVY) ---
 
 echo "🛡️ [SCAN] Scanning container layers for vulnerabilities with Trivy..."
 
@@ -113,12 +105,12 @@ fi
 
 echo "✅ [SCAN PASSED] No critical vulnerabilities found."
 
-# --- 8. DISTRIBUTION LAYER ---
+# --- 9. DISTRIBUTION LAYER ---
 echo "🏷️ Appending 'latest' marker to current layer context..."
-docker tag "${DOCKER_USER}/${IMAGE_NAME}:${NEW_VERSION}" "${DOCKER_USER}/${IMAGE_NAME}:latest"
+docker tag "$FULL_IMAGE_TAG" "${DOCKER_USER}/${IMAGE_NAME}:latest"
 
 echo "📤 Syncing layers to Docker Hub registry..."
-docker push "${DOCKER_USER}/${IMAGE_NAME}:${NEW_VERSION}"
+docker push "$FULL_IMAGE_TAG"
 docker push "${DOCKER_USER}/${IMAGE_NAME}:latest"
 
 echo "🎉 Deployment pipeline finalized successfully for $NEW_VERSION"
