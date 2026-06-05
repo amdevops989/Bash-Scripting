@@ -1,0 +1,8 @@
+{
+  "project": "core-api",
+  "environments": {
+    "dev": "t3.medium",
+    "prod": "m5.large"
+  },
+  "active": true
+}
