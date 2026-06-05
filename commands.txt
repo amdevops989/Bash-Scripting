@@ -1,0 +1,64 @@
+Here is a comprehensive cheatsheet of the most crucial DevOps command-line tools and utilities, broken down by category for quick reference:
+
+📑 Text & Data Processing
+grep: Searches text files for lines matching a pattern.
+
+Example: grep -i "error" app.log (Finds all errors, case-insensitive).
+
+awk: Powerhouse for pattern scanning and processing columns of text.
+
+Example: awk -F: '{print $1}' /etc/passwd' (Splits lines by : and prints the first column).
+
+sed: Stream editor used to search, replace, and modify text in-place.
+
+Example: sed -i 's/foo/bar/g' config.env (Replaces all instances of foo with bar).
+
+jq: Command-line processor explicitly built for parsing, filtering, and slicing JSON data.
+
+Example: echo $JSON_DATA | jq -r '.environments.prod' (Extracts a nested JSON key as raw text).
+
+cut: Extracts sections or specific fields from each line of a file.
+
+Example: echo "v1.2.3" | cut -d. -f1 (Uses . as a delimiter to grab the major version).
+
+tr: Translates, squeezes, or deletes characters from standard input.
+
+Example: echo "hello" | tr '[:lower:]' '[:upper:]' (Converts text completely to uppercase).
+
+🌐 Network Diagnostics & APIs
+curl: Transfers data to or from a server using supported protocols (HTTP, HTTPS, FTP, etc.).
+
+Example: curl -I https://api.github.com (Fetches only the HTTP response headers).
+
+wget: Non-interactive network downloader used to pull files and binaries from the web.
+
+Example: wget https://releases.hashicorp.com/terraform/terraform.zip (Downloads a file directly).
+
+nc (Netcat): Arbitrary data injection tool used to read and write data across network connections.
+
+Example: nc -zv 10.0.0.5 5432 (Scans if port 5432 on a remote database is open).
+
+ss / netstat: Dumps socket statistics; used to check network interface rules and active sockets.
+
+Example: ss -tulpn (Shows all listening TCP/UDP ports and the process names attached to them).
+
+🖥️ System & Resource Management
+lsof: List Open Files; reveals exactly which files, directories, or network ports are opened by which processes.
+
+Example: lsof -i :8080 (Identifies the exact process ID running on port 8080).
+
+find: Searches for files and directories in a directory hierarchy based on user-defined expressions.
+
+Example: find /var/log -name "*.log" -mtime +30 (Finds files ending in .log older than 30 days).
+
+xargs: Builds and executes command lines from standard input streams.
+
+Example: find . -name "*.tmp" | xargs rm -f (Passes the output of find straight into rm to clear out files).
+
+ps: Reports a snapshot of current active system processes.
+
+Example: ps aux | grep "nginx" (Finds the execution paths and PIDs of any running Nginx workers).
+
+df / du: Reports filesystem disk space usage (df) and estimates file space usage (du).
+
+Example: du -sh /var/lib/docker (Displays the human-readable total size of the Docker storage folder).
