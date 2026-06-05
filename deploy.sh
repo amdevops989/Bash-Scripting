@@ -100,6 +100,19 @@ else
   exit 1
 fi
 
+# --- 7.2. VULNERABILITY SCANNING LAYER (TRIVY) ---
+
+echo "🛡️ [SCAN] Scanning container layers for vulnerabilities with Trivy..."
+
+# --exit-code 1 means: if a CRITICAL vulnerability is found, crash the script right here.
+# --severity CRITICAL isolates severe security threats only, preventing false alarms.
+if ! trivy image --exit-code 1 --severity CRITICAL "$FULL_IMAGE_TAG"; then
+  echo "❌ [SCAN FAILED] Critical vulnerabilities detected! Blocking registry push." >&2
+  exit 1
+fi
+
+echo "✅ [SCAN PASSED] No critical vulnerabilities found."
+
 # --- 8. DISTRIBUTION LAYER ---
 echo "🏷️ Appending 'latest' marker to current layer context..."
 docker tag "${DOCKER_USER}/${IMAGE_NAME}:${NEW_VERSION}" "${DOCKER_USER}/${IMAGE_NAME}:latest"
